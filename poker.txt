@@ -1,0 +1,364 @@
+# 4-Player Texas Hold’em (1 Human + 3 AI) — Engineering Requirements (JavaScript, for Codex)
+
+> Language: JavaScript (Node.js CLI first)  
+> Players: 4 seats (1 Human, 3 AI)  
+> AI: Very strong + **CHEAT_MODE** (AI can see human hole cards)  
+> Date: 2025-12-23 (Asia/Taipei)
+
+---
+
+## 1. Product Definition
+
+### 1.1 Objective
+Create a complete, playable **Texas Hold’em** implementation with a strong AI system. The human plays against three AIs. The AIs are allowed to use a “cheat channel” to view the human’s hole cards to maximize strength.
+
+### 1.2 Supported Modes
+- **CLI mode (required)**: runs entirely in terminal.
+- **Browser mode (optional)**: can be added later; core engine must be UI-agnostic.
+
+### 1.3 Configuration
+All config should be set via a single config file or environment variables:
+- `STARTING_STACK` (default: 1000)
+- `SB` (default: 5)
+- `BB` (default: 10)
+- `ANTE` (default: 0)
+- `CHEAT_MODE` (default: true)
+- `AI_ITERATIONS_PREFLOP/FLOP/TURN/RIVER` (defaults: 1500/2500/4000/6000, adaptively increased for big pots)
+- `RNG_SEED` (optional for deterministic tests)
+
+---
+
+## 2. Game Rules & Flow
+
+### 2.1 Table / Positions (4-handed)
+Use these seat labels (fixed ordering):
+- Seat 0: Human
+- Seat 1: AI_1
+- Seat 2: AI_2
+- Seat 3: AI_3
+
+Dealer button rotates every hand:
+- Button determines preflop action order and blind posting.
+
+### 2.2 Hand Lifecycle State Machine
+Define explicit phases:
+
+1. `HAND_INIT`
+2. `POST_BLINDS` (and ante if enabled)
+3. `DEAL_HOLE`
+4. `BETTING_PREFLOP`
+5. `DEAL_FLOP` (burn 1, deal 3)
+6. `BETTING_FLOP`
+7. `DEAL_TURN` (burn 1, deal 1)
+8. `BETTING_TURN`
+9. `DEAL_RIVER` (burn 1, deal 1)
+10. `BETTING_RIVER`
+11. `SHOWDOWN`
+12. `PAYOUT`
+13. `HAND_CLEANUP` → next hand
+
+Early exit:
+- If at any point only 1 player remains not folded → skip to `PAYOUT`.
+
+### 2.3 Action Order Rules
+- **Preflop**: first to act is seat left of BB (UTG) relative to dealer.
+- **Postflop**: first to act is seat left of dealer (SB position) among remaining active players.
+- Skip folded and all-in players in turn rotation.
+
+---
+
+## 3. Betting Engine Requirements
+
+### 3.1 Player Status
+Each player must have:
+- `stack`
+- `inHand` (not busted)
+- `hasFolded`
+- `isAllIn`
+- `currentBet` (amount contributed in current street)
+- `totalContrib` (total contributed in hand)
+
+### 3.2 Legal Actions
+Given `toCall = currentStreetMaxBet - player.currentBet`:
+
+- If `toCall > 0`:
+  - `FOLD`
+  - `CALL` (pay min(stack, toCall); if stack < toCall → becomes all-in)
+  - `RAISE` (must be ≥ minRaise unless all-in)
+  - `ALL_IN` (valid always)
+- If `toCall == 0`:
+  - `CHECK`
+  - `BET` (if no bet yet this street)
+  - `RAISE` (if bet exists; in practice this is “bet” vs “raise” label)
+  - `ALL_IN`
+
+### 3.3 Min Raise Rules
+Track:
+- `lastAggressiveSize` (difference between last raise and previous max bet)
+- `minRaise = lastAggressiveSize` (or BB if first raise preflop)
+
+Rules:
+- A raise must make `newMaxBet >= currentMaxBet + minRaise` unless player is going all-in for less (then it’s a “raise all-in” that may not reopen betting depending on rules). For simplicity:
+  - If an all-in raise is **less than minRaise**, do **not** reopen betting for players who already acted (standard rule). Implement this.
+
+### 3.4 Betting Round Termination
+A street ends when:
+- All non-folded, non-all-in players have **acted** since last aggressive action, and
+- Their `currentBet` equals `currentStreetMaxBet` (or they are all-in)
+
+Maintain:
+- `actedThisStreet[playerId]`
+- Reset `actedThisStreet` to false for all eligible players when a bet/raise occurs.
+
+### 3.5 Side Pots
+Must support multiple all-ins and side pots.
+
+Algorithm (deterministic):
+1. Collect all players with `totalContrib > 0`
+2. Sort unique contribution levels ascending.
+3. For each level range, create a pot slice:
+   - `sliceAmount = (level - prevLevel) * numberOfPlayersWithContrib>=level`
+   - Eligible winners = players who contributed ≥ level AND not folded
+4. Store pots in order: `pots[] = { amount, eligiblePlayerIds[] }`
+
+Payout:
+- For each pot in order, compute best hand among eligible players, split equally among tied winners.
+- Handle odd chips:
+  - Award remainder chip(s) starting from first winner left of dealer button (or fixed seat order). Choose one method and document it.
+
+---
+
+## 4. Card / Dealer Requirements
+
+### 4.1 Deck
+- Standard 52-card deck, no jokers.
+- Shuffle with Fisher–Yates using injected RNG function.
+
+### 4.2 Deal
+- Deal hole cards one at a time starting left of dealer, wrapping around.
+- Burn cards:
+  - Burn 1 before flop, 1 before turn, 1 before river.
+
+### 4.3 Showdown Visibility
+- Human always sees own hole cards.
+- AI sees its own hole cards.
+- At showdown:
+  - Reveal all remaining players’ hole cards (or at least the winners) — implement full reveal for clarity.
+
+---
+
+## 5. Hand Evaluation Requirements
+
+### 5.1 Input / Output
+Input:
+- 7 cards: 2 hole + 5 board
+
+Output:
+- Comparable structure:
+  - `category` (0..8) where higher is better (High Card..Straight Flush)
+  - `tiebreak` array for kicker comparisons
+  - `bestFiveCards` (for display)
+
+### 5.2 Correctness Cases
+Must pass:
+- All categories (pair, two pair, trips, straight, flush, full house, quads, straight flush)
+- Wheel straight (A-2-3-4-5)
+- Flush with board having 4 suited cards and 1 hole suited, etc.
+- Tie splits
+
+---
+
+## 6. AI Requirements (Cheating-Enabled Strong AI)
+
+### 6.1 Design Goals
+- Plays “tough”:
+  - Values strong hands aggressively
+  - Bluffs strategically
+  - Applies pressure when human is weak (with cheat signal)
+  - Avoids spewing chips into known strong human hands
+- Not perfectly predictable:
+  - Add small controlled randomness (“mixing”)
+
+### 6.2 Inputs Available to AI
+AI always has:
+- Its hole cards
+- Board cards
+- Public action history (bets, raises, calls, folds)
+- Stack sizes & pot size
+- Position (relative to button)
+
+Cheat channel (when `CHEAT_MODE=true`):
+- AI also knows **human hole cards**.
+
+### 6.3 Equity Estimation (Monte Carlo)
+Function:
+`estimateEquity({ heroHole, board, deadCards, numOpponents, iterations, knownOpponentsHoles? })`
+
+- If cheat mode:
+  - include human hole cards as `knownOpponentsHoles` (one opponent exact).
+- Randomly deal remaining unknown hole cards + remaining board cards.
+- Evaluate outcomes.
+
+Return:
+- `win`, `tie`, `lose`
+- `equity = win + tie/numTied` (approx)
+- Optional: `handStrengthBuckets`
+
+Adaptive iterations:
+- Increase iterations when:
+  - pot is large
+  - decision is close (equity near breakeven)
+  - later streets
+
+### 6.4 Opponent Modeling (Human-Focused)
+Maintain per opponent:
+- `vpip`, `pfr`, `aggFactor`, `foldToRaise`, `foldToCbet`, `showdownHands`
+Update after each hand.
+
+Use it to estimate:
+- `foldEquity` vs bet sizes
+- Likelihood ranges when NOT cheating (for other AIs)
+
+### 6.5 Decision Policy (EV + Fold Equity)
+At each decision, consider candidate actions:
+- fold (EV = 0)
+- call/check
+- raise sizes: 33% pot, 66% pot, 100% pot, all-in (prune invalid sizes)
+
+Approx EV:
+- `EV_call = equity * (potAfterCall) - (1 - equity) * callCost`
+- `EV_raise = foldEquity * potNow + (1 - foldEquity) * (equityRaise * potAfterCalled - (1 - equityRaise) * riskAmount)`
+
+Notes:
+- `equityRaise` can be approximated as equity vs calling range; if too heavy, reuse base equity and adjust slightly.
+- Add risk penalties when multiway and stacks are deep.
+
+Cheat adjustments:
+- If AI knows human exact hand category:
+  - Increase foldEquity estimate for bluffs when human is weak and board is threatening.
+  - Decrease bluffing frequency when human is strong.
+  - Prefer thin value bets when AI is slightly ahead and can extract.
+
+### 6.6 Preflop Strategy
+Implement position-based ranges (4-handed):
+- BTN open wider than SB/BB
+- 3bet ranges vs opens
+- Call vs 3bet ranges
+
+Cheat layer:
+- If human’s exact hole cards are known:
+  - tighten/loosen 3bet and call decisions accordingly.
+
+### 6.7 Randomization (“Mixing”)
+After computing EVs:
+- Convert action EVs to weights:
+  - `weight = exp(EV / temperature)`
+- Pick stochastically with `temperature` small (e.g., 30–80 chip units scale)
+- Ensure extremely bad EV actions have near-zero probability.
+
+---
+
+## 7. CLI UX Spec
+
+### 7.1 Display Layout (Example)
+Each street print:
+- Board: `[Ah Kd 7s]` etc
+- Pot: `Pot=120`
+- To call: `ToCall=20`
+- Stacks: `H:980 A1:1010 A2:950 A3:1060`
+- Action log (last N lines)
+
+### 7.2 Human Input
+Accepted commands:
+- `fold`
+- `check`
+- `call`
+- `bet 120`
+- `raise 240`
+- `allin`
+- `help`
+- `quit`
+
+Validate input; if invalid show legal options.
+
+---
+
+## 8. Logging / Debug
+- Provide `DEBUG=true` to print AI internals:
+  - equity estimates
+  - chosen action EVs
+  - whether cheat info was used
+
+---
+
+## 9. Code Organization (Required)
+src/
+index.js
+engine/
+gameState.js
+dealer.js
+betting.js
+pot.js
+rules.js
+eval/
+handEvaluator.js
+ai/
+aiPlayer.js
+equityMonteCarlo.js
+opponentModel.js
+strategy.js
+cheatVision.js
+ui/
+cli.js
+utils/
+rng.js
+format.js
+test/
+evaluator.test.js
+betting.test.js
+pot.test.js
+ai.test.js
+
+yaml
+複製程式碼
+
+Engine must not import UI directly. UI calls engine APIs.
+
+---
+
+## 10. Testing Plan
+
+### 10.1 Hand Evaluator Tests
+- Provide at least 30 deterministic test cases across all ranks
+- Include tie/split pots
+- Include wheel straight and board-pair full house scenarios
+
+### 10.2 Betting / Side Pot Tests
+- Single all-in heads-up
+- Two all-ins different stacks
+- Three-way all-in with folding player
+- Odd chip distribution rule
+
+### 10.3 AI Tests (Sanity)
+- If AI has nuts on river → must choose value bet/raise often
+- If cheat reveals human has unbeatable nuts → AI should fold most marginal hands
+- Monte Carlo returns consistent equity ranges with fixed RNG seed
+
+---
+
+## 11. Acceptance Criteria
+- Playable end-to-end for 100+ hands without crash
+- Betting rules correct, including min-raise and side pots
+- Hand evaluation correct under tests
+- AI uses Monte Carlo and opponent modeling
+- CHEAT_MODE visibly changes AI behavior
+- Clear README with setup/run instructions
+
+---
+
+## 12. Codex “Build Instruction” Prompt
+Copy/paste into Codex:
+
+> Implement a Node.js CLI Texas Hold’em game in JavaScript with 4 seats (1 human, 3 AI). Build a UI-agnostic engine with a correct betting state machine (blinds, actions, min-raise rules, all-ins, side pots) and a reliable 7-card hand evaluator. Build strong AI using Monte Carlo equity estimation + opponent modeling, plus a configurable cheat channel (CHEAT_MODE) where AI can read the human player’s hole cards via a dedicated cheatVision.js module. Provide CLI interaction for human commands (fold/check/call/bet/raise/allin/help/quit). Add tests for evaluator, betting, pot splitting, and AI sanity with seeded RNG.
+
+---

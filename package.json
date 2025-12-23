@@ -1,0 +1,14 @@
+{
+  "name": "poker-cli",
+  "version": "1.0.0",
+  "description": "Texas Hold'em CLI game (1 human vs 3 AI).",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/evaluator.test.js && node test/betting.test.js && node test/pot.test.js && node test/ai.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
