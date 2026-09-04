@@ -78,6 +78,21 @@ back). Typed commands still work as a shortcut:
 npm test
 ```
 
+## AI
+
+Each AI decision runs a Monte Carlo equity estimate (against the human's real
+cards when CHEAT_MODE is on, random hands otherwise), then scores fold / call /
+bet sizes / all-in by expected value and picks stochastically among the
+near-best options.
+
+Opponent modelling is per seat: a shared registry tracks VPIP, PFR,
+aggression and fold-to-raise for every player at the table (human and AIs
+alike, since betting actions are public). When an AI considers a bet it
+multiplies each remaining opponent's own fold probability, adjusted for how
+often that player has already bet or raised this hand and for how tight they
+are, so a bluff is worth more into a player who folds a lot and a tight
+player's raise discounts the AI's equity more than a loose player's.
+
 ## Structure
 
 The engine is UI-agnostic and does not import the CLI.

@@ -100,12 +100,42 @@ function buildCandidateBets(state, player, legalActions) {
   });
 }
 
-function chooseAction({ state, player, legalActions, opponentModel, rng }) {
+const DEFAULT_PROFILE = { vpip: 0.45, pfr: 0.2, aggFactor: 1, foldToRaise: 0.35 };
+
+// Resolve a per-opponent profile from either a registry (OpponentModels) or
+// a legacy single model applied to everyone.
+function profileFor(opponentModels, opponentModel, playerId) {
+  if (opponentModels && opponentModels.isRegistry) {
+    return opponentModels.getProfile(playerId);
+  }
+  if (opponentModel && typeof opponentModel.getProfile === "function") {
+    return opponentModel.getProfile();
+  }
+  return DEFAULT_PROFILE;
+}
+
+function chooseAction({
+  state,
+  player,
+  legalActions,
+  opponentModel,
+  opponentModels,
+  rng,
+}) {
   const toCall = Math.max(0, state.betting.currentStreetMaxBet - player.currentBet);
   const potNow = state.pot;
-  const activeOpponents = state.players.filter(
+  const opponents = state.players.filter(
     (p) => p.inHand && !p.hasFolded && p.id !== player.id
-  ).length;
+  );
+  const activeOpponents = opponents.length;
+  const profiles = {};
+  opponents.forEach((p) => {
+    profiles[p.id] = profileFor(opponentModels, opponentModel, p.id);
+  });
+  // A tight player's action says more about their hand than a loose
+  // player's. 1.0 at the population-average VPIP.
+  const tightness = (id) =>
+    clamp((1 - profiles[id].vpip) / (1 - DEFAULT_PROFILE.vpip), 0.6, 1.4);
   const cheatInfo = getCheatInfo(state);
   const knownOpponentsHoles =
     cheatInfo && cheatInfo.humanHole && player.id !== 0
@@ -158,32 +188,45 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
           !state.players[a.playerId].hasFolded
       )
     : [];
-  const aggressionFaced = rangeSignals.reduce((sum, a) => {
-    const weight = a.type === "CALL" ? 0.25 : 1;
-    return sum + (a.street === state.betting.street ? weight : weight * 0.5);
-  }, 0);
+  // Aggression is tracked per opponent (for their own fold rate) and in
+  // total (for our equity discount), weighted by how tight each player is.
+  const aggressionBy = {};
+  let aggressionFaced = 0;
+  rangeSignals.forEach((a) => {
+    const base = a.type === "CALL" ? 0.25 : 1;
+    const streetWeight = a.street === state.betting.street ? 1 : 0.5;
+    const w = base * streetWeight;
+    aggressionBy[a.playerId] = (aggressionBy[a.playerId] || 0) + w;
+    aggressionFaced += w * (profiles[a.playerId] ? tightness(a.playerId) : 1);
+  });
   const equity = clamp(rawEquity * Math.pow(0.75, aggressionFaced), 0, 1);
 
-  const profile = opponentModel ? opponentModel.getProfile() : null;
-  let foldEquity = profile ? profile.foldToRaise : 0.35;
-  foldEquity = clamp(foldEquity, 0.05, 0.8);
-
-  if (cheatInfo && cheatInfo.humanHole && player.id !== 0) {
-    let humanStrength = 0;
-    if (state.board.length >= 3) {
-      const evalResult = evaluateBest([...cheatInfo.humanHole, ...state.board]);
-      humanStrength = evalResult.category;
-    } else {
-      humanStrength = preflopStrength(cheatInfo.humanHole);
+  // Per-opponent base fold-to-raise rate. The cheat channel refines the
+  // human's: a weak human on a scary board folds more, a strong one less.
+  const baseFoldRate = {};
+  opponents.forEach((p) => {
+    let fe = clamp(profiles[p.id].foldToRaise, 0.05, 0.8);
+    if (p.id === 0 && cheatInfo && cheatInfo.humanHole && player.id !== 0) {
+      let humanStrength = 0;
+      if (state.board.length >= 3) {
+        const evalResult = evaluateBest([...cheatInfo.humanHole, ...state.board]);
+        humanStrength = evalResult.category;
+      } else {
+        humanStrength = preflopStrength(cheatInfo.humanHole);
+      }
+      if (humanStrength <= 1 && boardThreat(state.board)) {
+        fe += 0.1;
+      }
+      if (humanStrength >= 5) {
+        fe -= 0.2;
+      }
     }
-    if (humanStrength <= 1 && boardThreat(state.board)) {
-      foldEquity += 0.1;
-    }
-    if (humanStrength >= 5) {
-      foldEquity -= 0.2;
-    }
-  }
-  foldEquity = clamp(foldEquity, 0.05, 0.85);
+    baseFoldRate[p.id] = clamp(fe, 0.05, 0.85);
+  });
+  const foldEquity =
+    activeOpponents > 0
+      ? opponents.reduce((sum, p) => sum + baseFoldRate[p.id], 0) / activeOpponents
+      : 0.35;
 
   // Model of what happens after we bet/raise `risk` more chips:
   // - Opponents fold more often to bigger bets. Use the minimum-defence
@@ -204,16 +247,28 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
   const OVERBET_PENALTY = 0.1;
   const betOutcome = (risk) => {
     const alpha = risk / Math.max(1, potNow + risk);
-    const foldOne = clamp(
-      Math.max(
-        foldEquity * Math.pow(0.5, aggressionFaced),
-        alpha * Math.pow(0.6, aggressionFaced)
-      ),
-      0.02,
-      0.95
-    );
-    const foldAll = Math.pow(foldOne, Math.max(1, activeOpponents));
-    const rangeNarrowness = foldOne;
+    // Each opponent folds according to their own profile and their own
+    // aggression this hand; everyone has to fold for us to win outright.
+    let foldAll = 1;
+    let foldSum = 0;
+    opponents.forEach((p) => {
+      const agg = aggressionBy[p.id] || 0;
+      const foldOne = clamp(
+        Math.max(
+          baseFoldRate[p.id] * Math.pow(0.5, agg),
+          alpha * Math.pow(0.6, agg)
+        ),
+        0.02,
+        0.95
+      );
+      foldAll *= foldOne;
+      foldSum += foldOne;
+    });
+    if (activeOpponents === 0) {
+      foldAll = clamp(Math.max(foldEquity, alpha), 0.02, 0.95);
+      foldSum = foldAll;
+    }
+    const rangeNarrowness = foldSum / Math.max(1, activeOpponents);
     const eqCalled = clamp(
       equity - 1.5 * rangeNarrowness * equity * (1 - equity),
       0,
@@ -305,6 +360,7 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
       rawEquity,
       aggressionFaced,
       foldEquity,
+      opponentFoldRates: baseFoldRate,
       evs: actions.map((entry) => ({
         action: entry.action,
         ev: Number(entry.ev.toFixed(2)),

@@ -11,7 +11,7 @@ const {
 const { createRng } = require("../utils/rng");
 const { createAIPlayer } = require("../ai/aiPlayer");
 const { estimateEquity } = require("../ai/equityMonteCarlo");
-const { OpponentModel } = require("../ai/opponentModel");
+const { OpponentModels } = require("../ai/opponentModel");
 
 function formatLegalOptions(legalActions) {
   const parts = [];
@@ -355,11 +355,12 @@ async function startCli() {
   const aiRng = createRng(
     config.RNG_SEED ? `${config.RNG_SEED}-ai` : ""
   );
-  const humanModel = new OpponentModel();
+  // One profile per seat (human and AIs alike), shared by all AIs.
+  const models = new OpponentModels();
   const aiPlayers = {
-    1: createAIPlayer(1, aiRng, config, humanModel),
-    2: createAIPlayer(2, aiRng, config, humanModel),
-    3: createAIPlayer(3, aiRng, config, humanModel),
+    1: createAIPlayer(1, aiRng, config, models),
+    2: createAIPlayer(2, aiRng, config, models),
+    3: createAIPlayer(3, aiRng, config, models),
   };
 
   const getAction = async (player, gameState, legalActions) => {
@@ -386,7 +387,7 @@ async function startCli() {
     if (!handSummary) {
       break;
     }
-    humanModel.updateFromHand(handSummary, 0);
+    models.updateFromHand(handSummary);
   }
 
   console.log("Game over.");

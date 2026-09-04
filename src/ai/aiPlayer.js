@@ -1,18 +1,20 @@
 const { chooseAction } = require("./strategy");
-const { OpponentModel } = require("./opponentModel");
+const { OpponentModels } = require("./opponentModel");
 
-function createAIPlayer(id, rng, config, sharedOpponentModel) {
-  // All AIs model the same human, so they can share one model.
-  const opponentModel = sharedOpponentModel || new OpponentModel();
+// `models` is a shared OpponentModels registry (one profile per seat).
+// Betting actions are public, so all AIs can read the same registry.
+function createAIPlayer(id, rng, config, models) {
+  const opponentModels =
+    models && models.isRegistry ? models : new OpponentModels();
   return {
     id,
-    opponentModel,
+    opponentModels,
     decideAction(state, player, legalActions, logFn) {
       const result = chooseAction({
         state,
         player,
         legalActions,
-        opponentModel,
+        opponentModels,
         rng,
       });
       if (config.DEBUG && logFn) {
@@ -27,7 +29,7 @@ function createAIPlayer(id, rng, config, sharedOpponentModel) {
       return result.action;
     },
     recordHand(handSummary) {
-      opponentModel.updateFromHand(handSummary, 0);
+      opponentModels.updateFromHand(handSummary);
     },
   };
 }

@@ -366,6 +366,7 @@ function settleHand(state) {
     actions: state.handActions.slice(),
     showdown: state.showdown,
     bb: state.config.BB,
+    playerIds: state.players.filter((p) => p.inHand).map((p) => p.id),
   };
 }
 

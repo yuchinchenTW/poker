@@ -75,19 +75,25 @@ class OpponentModel {
   }
 
   getProfile() {
-    const hands = Math.max(1, this.stats.hands);
-    const vpip = this.stats.vpipCount / hands;
-    const pfr = this.stats.pfrCount / hands;
+    // Bayesian-style priors so a player we have barely seen gets a
+    // population-average profile that observed hands gradually override.
+    const PRIOR_WEIGHT = 5;
+    const PRIOR_VPIP = 0.45;
+    const PRIOR_PFR = 0.2;
+    const vpip =
+      (this.stats.vpipCount + PRIOR_VPIP * PRIOR_WEIGHT) /
+      (this.stats.hands + PRIOR_WEIGHT);
+    const pfr =
+      (this.stats.pfrCount + PRIOR_PFR * PRIOR_WEIGHT) /
+      (this.stats.hands + PRIOR_WEIGHT);
     const aggFactor =
       this.stats.postflopAggressive / Math.max(1, this.stats.postflopCalls);
-    // Bayesian-style prior: start at 35% fold-to-raise and let observed
-    // hands pull the estimate toward the real frequency.
     const PRIOR_FOLD_TO_RAISE = 0.35;
-    const PRIOR_WEIGHT = 5;
     const foldToRaise =
       (this.stats.foldToRaiseCount + PRIOR_FOLD_TO_RAISE * PRIOR_WEIGHT) /
       (this.stats.raiseOpportunities + PRIOR_WEIGHT);
     return {
+      hands: this.stats.hands,
       vpip,
       pfr,
       aggFactor,
@@ -96,6 +102,37 @@ class OpponentModel {
   }
 }
 
+// One model per seat. Betting actions are public, so a single registry can
+// be shared by every AI; each AI simply reads the profiles of the opponents
+// still in the hand.
+class OpponentModels {
+  constructor() {
+    this.isRegistry = true;
+    this.models = new Map();
+  }
+
+  get(playerId) {
+    if (!this.models.has(playerId)) {
+      this.models.set(playerId, new OpponentModel());
+    }
+    return this.models.get(playerId);
+  }
+
+  updateFromHand(handSummary) {
+    const ids = new Set(
+      Array.isArray(handSummary.playerIds)
+        ? handSummary.playerIds
+        : handSummary.actions.map((a) => a.playerId)
+    );
+    ids.forEach((id) => this.get(id).updateFromHand(handSummary, id));
+  }
+
+  getProfile(playerId) {
+    return this.get(playerId).getProfile();
+  }
+}
+
 module.exports = {
   OpponentModel,
+  OpponentModels,
 };
