@@ -1,8 +1,9 @@
 const { chooseAction } = require("./strategy");
 const { OpponentModel } = require("./opponentModel");
 
-function createAIPlayer(id, rng, config) {
-  const opponentModel = new OpponentModel();
+function createAIPlayer(id, rng, config, sharedOpponentModel) {
+  // All AIs model the same human, so they can share one model.
+  const opponentModel = sharedOpponentModel || new OpponentModel();
   return {
     id,
     opponentModel,

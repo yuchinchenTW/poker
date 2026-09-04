@@ -220,7 +220,13 @@ async function playHand(state, getAction, onLog, onAction) {
     });
   }
 
-  const sbSeat = nextActiveSeat(state, state.buttonIndex);
+  // Heads-up: the button posts the small blind and acts first preflop.
+  const seatsWithChips = state.players.filter((p) => p.inHand && p.stack > 0)
+    .length;
+  const sbSeat =
+    seatsWithChips === 2
+      ? state.buttonIndex
+      : nextActiveSeat(state, state.buttonIndex);
   const bbSeat = nextActiveSeat(state, sbSeat);
   if (sbSeat === -1 || bbSeat === -1) {
     return null;
@@ -353,6 +359,7 @@ function settleHand(state) {
     board: state.board.slice(),
     actions: state.handActions.slice(),
     showdown: state.showdown,
+    bb: state.config.BB,
   };
 }
 

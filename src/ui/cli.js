@@ -6,6 +6,7 @@ const { formatCards, formatStacks, formatActionLog } = require("../utils/format"
 const { createRng } = require("../utils/rng");
 const { createAIPlayer } = require("../ai/aiPlayer");
 const { estimateEquity } = require("../ai/equityMonteCarlo");
+const { OpponentModel } = require("../ai/opponentModel");
 
 function formatLegalOptions(legalActions) {
   const parts = [];
@@ -41,14 +42,7 @@ function formatLegalOptions(legalActions) {
 }
 
 function getEquityIterations(state) {
-  const perStreet = {
-    PREFLOP: state.config.AI_ITERATIONS_PREFLOP,
-    FLOP: state.config.AI_ITERATIONS_FLOP,
-    TURN: state.config.AI_ITERATIONS_TURN,
-    RIVER: state.config.AI_ITERATIONS_RIVER,
-  };
-  const fallback = state.config.EQUITY_DISPLAY_ITERATIONS || 1500;
-  return perStreet[state.betting.street] || fallback;
+  return state.config.EQUITY_DISPLAY_ITERATIONS || 1500;
 }
 
 function buildEquitySeed(state, suffix) {
@@ -182,10 +176,16 @@ async function startCli() {
   const config = loadConfig();
   const state = createGameState(config);
   const rl = readline.createInterface({ input, output });
+  // Separate RNG for AI sampling so the deck shuffle sequence does not
+  // depend on how many Monte Carlo iterations the AI ran.
+  const aiRng = createRng(
+    config.RNG_SEED ? `${config.RNG_SEED}-ai` : ""
+  );
+  const humanModel = new OpponentModel();
   const aiPlayers = {
-    1: createAIPlayer(1, state.rng, config),
-    2: createAIPlayer(2, state.rng, config),
-    3: createAIPlayer(3, state.rng, config),
+    1: createAIPlayer(1, aiRng, config, humanModel),
+    2: createAIPlayer(2, aiRng, config, humanModel),
+    3: createAIPlayer(3, aiRng, config, humanModel),
   };
 
   const getAction = async (player, gameState, legalActions) => {
@@ -212,7 +212,7 @@ async function startCli() {
     if (!handSummary) {
       break;
     }
-    Object.values(aiPlayers).forEach((ai) => ai.recordHand(handSummary));
+    humanModel.updateFromHand(handSummary, 0);
   }
 
   console.log("Game over.");

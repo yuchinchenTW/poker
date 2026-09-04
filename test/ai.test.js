@@ -97,4 +97,68 @@ const { createRng } = require("../src/utils/rng");
   assert.strictEqual(result.action.type, "FOLD");
 }
 
-console.log("ai.test.js passed");
+// Large stakes: softmax must not overflow; AI with the nuts facing a bet must not fold
+{
+  const rng = { random: () => 0.5 };
+  const state = {
+    config: {
+      BB: 10000,
+      CHEAT_MODE: false,
+      AI_ITERATIONS_PREFLOP: 200,
+      AI_ITERATIONS_FLOP: 200,
+      AI_ITERATIONS_TURN: 200,
+      AI_ITERATIONS_RIVER: 400,
+    },
+    pot: 600000,
+    board: ["Ah", "Kh", "Qh", "Jh", "2d"],
+    players: [
+      { id: 0, inHand: true, hasFolded: false },
+      { id: 1, inHand: true, hasFolded: false },
+    ],
+    betting: {
+      currentStreetMaxBet: 300000,
+      minRaise: 300000,
+      street: "RIVER",
+    },
+  };
+  const player = {
+    id: 1,
+    hole: ["Th", "9h"],
+    currentBet: 0,
+    stack: 1000000,
+    inHand: true,
+    hasFolded: false,
+  };
+  const legalActions = [
+    { type: "FOLD" },
+    { type: "CALL", amount: 300000 },
+    { type: "RAISE", minAmount: 600000, maxAmount: 1000000 },
+    { type: "ALL_IN" },
+  ];
+  const result = chooseAction({ state, player, legalActions, opponentModel: null, rng });
+  assert.notStrictEqual(result.action.type, "FOLD", "nuts must not fold at high stakes");
+  assert.ok(["CALL", "RAISE", "ALL_IN"].includes(result.action.type));
+}
+
+// Heads-up: button posts SB and acts first preflop
+{
+  const { createGameState, playHand } = require("../src/engine/gameState");
+  const { DEFAULTS } = require("../src/engine/rules");
+  const state = createGameState({ ...DEFAULTS, RNG_SEED: "hu-seed" });
+  state.players[2].stack = 0;
+  state.players[3].stack = 0;
+  state.buttonIndex = 3; // next active seat is 0 -> button will be seat 0
+  const order = [];
+  playHand(state, async (player) => {
+    order.push(player.id);
+    return { type: "FOLD" };
+  }).then(() => {
+    assert.strictEqual(state.buttonIndex, 0);
+    const sb = state.handActions.find((a) => a.type === "SB");
+    const bb = state.handActions.find((a) => a.type === "BB");
+    assert.strictEqual(sb.playerId, 0, "button posts SB heads-up");
+    assert.strictEqual(bb.playerId, 1, "other player posts BB heads-up");
+    assert.strictEqual(order[0], 0, "button acts first preflop heads-up");
+    console.log("ai.test.js passed");
+  });
+}

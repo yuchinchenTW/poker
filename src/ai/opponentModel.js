@@ -41,7 +41,14 @@ class OpponentModel {
           postflopCalls += 1;
         }
       }
-      if (action.toCall && action.toCall > 0) {
+      // Only count a genuine raise; facing the unraised blinds preflop
+      // should not inflate the fold-to-raise statistic.
+      const facingBlindsOnly =
+        action.street === "PREFLOP" &&
+        typeof action.maxBetFaced === "number" &&
+        typeof handSummary.bb === "number" &&
+        action.maxBetFaced <= handSummary.bb;
+      if (action.toCall && action.toCall > 0 && !facingBlindsOnly) {
         sawRaiseOpportunity = true;
         if (action.type === "FOLD") {
           foldToRaise = true;
@@ -69,12 +76,17 @@ class OpponentModel {
 
   getProfile() {
     const hands = Math.max(1, this.stats.hands);
-    const raiseOpps = Math.max(1, this.stats.raiseOpportunities);
     const vpip = this.stats.vpipCount / hands;
     const pfr = this.stats.pfrCount / hands;
     const aggFactor =
       this.stats.postflopAggressive / Math.max(1, this.stats.postflopCalls);
-    const foldToRaise = this.stats.foldToRaiseCount / raiseOpps;
+    // Bayesian-style prior: start at 35% fold-to-raise and let observed
+    // hands pull the estimate toward the real frequency.
+    const PRIOR_FOLD_TO_RAISE = 0.35;
+    const PRIOR_WEIGHT = 5;
+    const foldToRaise =
+      (this.stats.foldToRaiseCount + PRIOR_FOLD_TO_RAISE * PRIOR_WEIGHT) /
+      (this.stats.raiseOpportunities + PRIOR_WEIGHT);
     return {
       vpip,
       pfr,

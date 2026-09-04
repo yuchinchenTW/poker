@@ -117,14 +117,33 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
     knownOpponentsHoles,
     rng,
   });
-  const equity = equityResult.equity;
+  const rawEquity = equityResult.equity;
+
+  // Monte Carlo equity is against random hands. Opponents who bet or raised
+  // hold stronger-than-random ranges, so discount the equity once per
+  // aggressive action still standing (players who folded no longer matter).
+  // Aggression on the current street counts fully, earlier streets at half
+  // weight so a flop raise is not forgotten on the turn. Facing a bet costs
+  // 25% of raw equity, a bet + raise ~44%.
+  const aggressiveActions = Array.isArray(state.handActions)
+    ? state.handActions.filter(
+        (a) =>
+          !a.forced &&
+          a.playerId !== player.id &&
+          ["BET", "RAISE", "ALL_IN"].includes(a.type) &&
+          state.players[a.playerId] &&
+          !state.players[a.playerId].hasFolded
+      )
+    : [];
+  const aggressionFaced = aggressiveActions.reduce(
+    (sum, a) => sum + (a.street === state.betting.street ? 1 : 0.5),
+    0
+  );
+  const equity = clamp(rawEquity * Math.pow(0.75, aggressionFaced), 0, 1);
 
   const profile = opponentModel ? opponentModel.getProfile() : null;
   let foldEquity = profile ? profile.foldToRaise : 0.35;
   foldEquity = clamp(foldEquity, 0.05, 0.8);
-  if (activeOpponents > 1) {
-    foldEquity *= Math.max(0.35, 1 - 0.15 * (activeOpponents - 1));
-  }
 
   if (cheatInfo && cheatInfo.humanHole && player.id !== 0) {
     let humanStrength = 0;
@@ -142,6 +161,52 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
     }
   }
   foldEquity = clamp(foldEquity, 0.05, 0.85);
+
+  // Model of what happens after we bet/raise `risk` more chips:
+  // - Opponents fold more often to bigger bets. Use the minimum-defence
+  //   frequency alpha = bet / (pot + bet) as a floor for the modelled
+  //   fold-to-raise rate, so a 10x-pot shove is rarely called.
+  // - To win uncontested, every remaining opponent has to fold.
+  // - The hands that do call a big bet are strong, so equity-when-called is
+  //   discounted in proportion to how narrow the calling range is. The
+  //   discount is eq*(1-eq)-shaped: zero for the nuts and for no-hopers.
+  // - An opponent who has already bet or raised is committed and folds far
+  //   less often: the modelled fold rate is halved per aggressive action and
+  //   the size-based floor is reduced by 40% per aggressive action (a huge
+  //   shove still gets some folds even from a raiser).
+  // - A bet/raise can be re-raised. Weak hands then have to give up and lose
+  //   what they put in; the chance of that grows the weaker the hand is.
+  // - Deep-stack risk penalty: chips risked beyond the current pot are
+  //   taxed, so huge overbets are only chosen when clearly best.
+  const OVERBET_PENALTY = 0.1;
+  const betOutcome = (risk) => {
+    const alpha = risk / Math.max(1, potNow + risk);
+    const foldOne = clamp(
+      Math.max(
+        foldEquity * Math.pow(0.5, aggressionFaced),
+        alpha * Math.pow(0.6, aggressionFaced)
+      ),
+      0.02,
+      0.95
+    );
+    const foldAll = Math.pow(foldOne, Math.max(1, activeOpponents));
+    const rangeNarrowness = foldOne;
+    const eqCalled = clamp(
+      equity - 1.5 * rangeNarrowness * equity * (1 - equity),
+      0,
+      1
+    );
+    const reraiseGiveUp = 0.25 * (1 - eqCalled);
+    const penalty = OVERBET_PENALTY * Math.max(0, risk - potNow);
+    return { foldAll, eqCalled, reraiseGiveUp, penalty };
+  };
+  const aggressiveEv = (risk, potAfterCalled) => {
+    const { foldAll, eqCalled, reraiseGiveUp, penalty } = betOutcome(risk);
+    const whenCalled = eqCalled * potAfterCalled - (1 - eqCalled) * risk;
+    const whenContested =
+      (1 - reraiseGiveUp) * whenCalled + reraiseGiveUp * -risk;
+    return foldAll * potNow + (1 - foldAll) * whenContested - penalty;
+  };
 
   const actions = [];
   legalActions.forEach((action) => {
@@ -162,10 +227,8 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
   candidates.forEach((candidate) => {
     if (candidate.type === "ALL_IN") {
       const risk = player.stack;
-      const potAfterCalled = potNow + risk;
-      const ev =
-        foldEquity * potNow +
-        (1 - foldEquity) * (equity * potAfterCalled - (1 - equity) * risk);
+      const potAfterCalled = potNow + risk + toCall;
+      const ev = aggressiveEv(risk, potAfterCalled);
       actions.push({ action: candidate, ev });
       return;
     }
@@ -175,9 +238,7 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
       return;
     }
     const potAfterCalled = potNow + risk + toCall;
-    let ev =
-      foldEquity * potNow +
-      (1 - foldEquity) * (equity * potAfterCalled - (1 - equity) * risk);
+    let ev = aggressiveEv(risk, potAfterCalled);
     if (equity > 0.52 && equity < 0.65) {
       ev += state.config.BB * 2;
     }
@@ -190,8 +251,16 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
 
   actions.sort((a, b) => b.ev - a.ev);
 
-  const temperature = 60;
-  const weights = actions.map((entry) => Math.exp(entry.ev / temperature));
+  // Mixing temperature scales with the blind level (2 BB) so the softmax
+  // behaves the same at any stake: near-ties are mixed, clearly worse
+  // actions get near-zero probability. EVs are shifted by the best EV before
+  // exponentiating so large stakes cannot overflow to Infinity (which would
+  // otherwise make the selection loop pick the worst action).
+  const temperature = Math.max(1, (state.config.BB || 10) * 2);
+  const bestEv = actions[0].ev;
+  const weights = actions.map((entry) =>
+    Math.exp((entry.ev - bestEv) / temperature)
+  );
   const total = weights.reduce((sum, w) => sum + w, 0);
   let roll = rng.random() * total;
   let chosen = actions[actions.length - 1];
@@ -207,6 +276,8 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
     action: chosen.action,
     debug: {
       equity,
+      rawEquity,
+      aggressionFaced,
       foldEquity,
       evs: actions.map((entry) => ({
         action: entry.action,

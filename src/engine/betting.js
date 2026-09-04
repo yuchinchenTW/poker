@@ -42,6 +42,18 @@ function getLegalActions(state, player) {
     actions.push({ type: "CHECK" });
   }
 
+  // A player facing a short all-in raise after already acting may only
+  // fold or call; the betting is not reopened for them (standard rule).
+  const locked = Boolean(
+    state.betting.lockedThisStreet && state.betting.lockedThisStreet[player.id]
+  );
+  if (locked) {
+    if (player.stack > 0 && player.stack <= toCall) {
+      actions.push({ type: "ALL_IN", amount: player.stack });
+    }
+    return actions;
+  }
+
   if (player.stack > 0) {
     actions.push({ type: "ALL_IN", amount: player.stack });
   }
@@ -49,20 +61,10 @@ function getLegalActions(state, player) {
   const maxRaiseTo = player.currentBet + player.stack;
   if (state.betting.currentStreetMaxBet === 0) {
     const minBetTo = Math.min(maxRaiseTo, state.betting.minRaise);
-    if (maxRaiseTo >= minBetTo && player.stack > 0) {
+    if (player.stack > 0) {
       actions.push({ type: "BET", minAmount: minBetTo, maxAmount: maxRaiseTo });
     }
   } else if (player.stack > toCall) {
-    const minRaiseTo =
-      state.betting.currentStreetMaxBet + state.betting.minRaise;
-    if (maxRaiseTo >= minRaiseTo) {
-      actions.push({
-        type: "RAISE",
-        minAmount: minRaiseTo,
-        maxAmount: maxRaiseTo,
-      });
-    }
-  } else if (player.stack > 0 && toCall === 0) {
     const minRaiseTo =
       state.betting.currentStreetMaxBet + state.betting.minRaise;
     if (maxRaiseTo >= minRaiseTo) {
@@ -161,6 +163,7 @@ function applyAction(state, playerId, action) {
     street: state.betting.street,
     forced: false,
     toCall,
+    maxBetFaced: oldMax,
   });
 
   return { reopen, toCall, amount, actionType, betTo };
@@ -179,25 +182,11 @@ function bettingRoundComplete(state) {
   if (eligible.length === 0) {
     return true;
   }
-  if (eligible.length === 1) {
-    const p = eligible[0];
-    if (state.betting.lockedThisStreet && state.betting.lockedThisStreet[p.id]) {
-      return true;
-    }
-    return (
-      state.betting.actedThisStreet[p.id] &&
-      p.currentBet === state.betting.currentStreetMaxBet
-    );
-  }
-  return eligible.every((p) => {
-    if (state.betting.lockedThisStreet && state.betting.lockedThisStreet[p.id]) {
-      return true;
-    }
-    return (
+  return eligible.every(
+    (p) =>
       state.betting.actedThisStreet[p.id] &&
       (p.currentBet === state.betting.currentStreetMaxBet || p.isAllIn)
-    );
-  });
+  );
 }
 
 function nextEligibleSeat(state, fromSeat) {
@@ -255,6 +244,7 @@ async function runBettingRound(state, startingSeat, getAction) {
         });
       }
       if (result.reopen) {
+        state.betting.lockedThisStreet = {};
         state.players.forEach((p) => {
           if (p.inHand && !p.hasFolded && !p.isAllIn && p.id !== player.id) {
             state.betting.actedThisStreet[p.id] = false;
