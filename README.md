@@ -45,16 +45,26 @@ terminal cannot render the symbols; `COLOR` false disables the red tint.
 
 Environment variables with the same names override the file. For deterministic runs, set `RNG_SEED`.
 
-## CLI Commands
+## Playing
 
-- `fold`
-- `check`
-- `call`
-- `bet 120`
-- `raise 240`
-- `allin`
-- `help`
-- `quit`
+When it is your turn the legal actions are shown as a numbered menu:
+
+```
+Choose an action:
+  1) Fold
+  2) Call 10000
+  3) Raise to (20000-1000000)
+  4) All-in (1000000)
+  q) Quit
+```
+
+Type the number and press Enter. Choosing Bet or Raise opens a sizing menu
+(min, 1/3 pot, 1/2 pot, 3/4 pot, pot, all-in, or a custom amount; `0` goes
+back). Typed commands still work as a shortcut:
+
+- `fold`, `check`, `call`, `allin`
+- `bet 120`, `raise 240` (or `bet` / `raise` alone to open the sizing menu)
+- `help`, `quit`
 
 ## Tests
 
