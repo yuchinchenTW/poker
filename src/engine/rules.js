@@ -17,6 +17,8 @@ const DEFAULTS = {
   SHOW_EQUITY: false,
   EQUITY_DISPLAY_ITERATIONS: 1500,
   SHOW_TABLE_EQUITY: false,
+  UNICODE_SUITS: true,
+  COLOR: true,
 };
 
 function parseBool(value) {

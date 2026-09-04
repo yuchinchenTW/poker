@@ -12,5 +12,7 @@
   "SHOW_TABLE_EQUITY": true,
   "EQUITY_DISPLAY_ITERATIONS": 20000,
   "RNG_SEED": "",
-  "DEBUG": false
+  "DEBUG": false,
+  "UNICODE_SUITS": true,
+  "COLOR": true
 }

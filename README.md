@@ -33,9 +33,15 @@ Supported keys (defaults shown):
   "DEBUG": false,
   "SHOW_EQUITY": false,
   "EQUITY_DISPLAY_ITERATIONS": 1500,
-  "SHOW_TABLE_EQUITY": false
+  "SHOW_TABLE_EQUITY": false,
+  "UNICODE_SUITS": true,
+  "COLOR": true
 }
 ```
+
+Cards are displayed with suit symbols (e.g. `A♠ K♥`), hearts/diamonds in red.
+Set `UNICODE_SUITS` to `false` to fall back to letters (`As Kh`) if your
+terminal cannot render the symbols; `COLOR` false disables the red tint.
 
 Environment variables with the same names override the file. For deterministic runs, set `RNG_SEED`.
 

@@ -2,7 +2,12 @@ const readline = require("node:readline/promises");
 const { stdin: input, stdout: output } = require("node:process");
 const { createGameState, playHand } = require("../engine/gameState");
 const { loadConfig } = require("../engine/rules");
-const { formatCards, formatStacks, formatActionLog } = require("../utils/format");
+const {
+  formatCards,
+  formatStacks,
+  formatActionLog,
+  configureCardDisplay,
+} = require("../utils/format");
 const { createRng } = require("../utils/rng");
 const { createAIPlayer } = require("../ai/aiPlayer");
 const { estimateEquity } = require("../ai/equityMonteCarlo");
@@ -174,6 +179,10 @@ async function promptHumanAction(rl, player, state, legalActions) {
 
 async function startCli() {
   const config = loadConfig();
+  configureCardDisplay({
+    unicodeSuits: config.UNICODE_SUITS,
+    color: config.COLOR && Boolean(output.isTTY),
+  });
   const state = createGameState(config);
   const rl = readline.createInterface({ input, output });
   // Separate RNG for AI sampling so the deck shuffle sequence does not

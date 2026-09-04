@@ -340,7 +340,7 @@ function settleHand(state) {
       const player = state.players[hand.playerId];
       logLine(
         state,
-        `Showdown ${player.name}: ${hand.hole.join(" ")}`
+        `Showdown ${player.name}: ${formatCards(hand.hole)}`
       );
     });
   }
