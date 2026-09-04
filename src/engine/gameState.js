@@ -13,7 +13,7 @@ const {
   postForcedBet,
 } = require("./betting");
 const { buildSidePots, resolvePots } = require("./pot");
-const { evaluate7 } = require("../eval/handEvaluator");
+const { evaluate7, describeEvaluation } = require("../eval/handEvaluator");
 const { formatCards } = require("../utils/format");
 const { loadConfig } = require("./rules");
 
@@ -232,6 +232,8 @@ async function playHand(state, getAction, onLog, onAction) {
     return null;
   }
 
+  state.sbSeat = sbSeat;
+  state.bbSeat = bbSeat;
   const sbAmount = postForcedBet(state, sbSeat, state.config.SB, "SB");
   const bbAmount = postForcedBet(state, bbSeat, state.config.BB, "BB");
   state.betting.currentStreetMaxBet = Math.max(sbAmount, bbAmount);
@@ -340,9 +342,13 @@ function settleHand(state) {
       const player = state.players[hand.playerId];
       logLine(
         state,
-        `Showdown ${player.name}: ${formatCards(hand.hole)}`
+        `Showdown ${player.name}: ${formatCards(hand.hole)} - ${describeEvaluation(
+          hand.evaluation
+        )} ${formatCards(hand.evaluation.bestFiveCards)}`
       );
     });
+  } else if (active.length === 1) {
+    logLine(state, `${active[0].name} wins uncontested`);
   }
 
   potResults.forEach((result, idx) => {
@@ -371,6 +377,8 @@ function createGameState(configOverride) {
     rng,
     players: createPlayers(config),
     buttonIndex: -1,
+    sbSeat: -1,
+    bbSeat: -1,
     handNumber: 0,
     board: [],
     pot: 0,

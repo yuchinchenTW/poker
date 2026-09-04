@@ -49,7 +49,9 @@ function loadConfig() {
       const fileConfig = JSON.parse(raw);
       config = { ...config, ...fileConfig };
     } catch (err) {
-      // Ignore invalid config file.
+      console.error(
+        `Warning: could not parse ${configPath} (${err.message}). Using defaults and environment variables.`
+      );
     }
   }
 

@@ -44,6 +44,12 @@ Set `UNICODE_SUITS` to `false` to fall back to letters (`As Kh`) if your
 terminal cannot render the symbols; `COLOR` false disables the red tint.
 
 Environment variables with the same names override the file. For deterministic runs, set `RNG_SEED`.
+If `config.json` cannot be parsed a warning is printed and defaults are used.
+
+Performance: the 7-card evaluator is a direct rank/suit count (about 1M
+evaluations per second), so 5000 Monte Carlo iterations per AI decision cost
+roughly 50 ms and the full-table equity display (`SHOW_TABLE_EQUITY`) about
+100 ms per prompt. Raise the iteration counts if you want tighter estimates.
 
 ## Playing
 

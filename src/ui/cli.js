@@ -81,7 +81,7 @@ function estimatePlayerEquity(state, player, includeKnownOpponents) {
 }
 
 function recordFoldEquity(info, state) {
-  if (info.actionType !== "FOLD") {
+  if (info.actionType !== "FOLD" || !state.config.SHOW_TABLE_EQUITY) {
     return;
   }
   if (!state.equityAtFold) {
@@ -169,6 +169,15 @@ async function promptAmount(rl, action, state, player) {
     if (answer === "0" || answer === "back" || answer === "b") {
       return null;
     }
+    if (answer === "q" || answer === "quit") {
+      process.exit(0);
+    }
+    if (answer === "help" || answer === "h" || answer === "?") {
+      console.log(
+        `Pick a preset number, type an amount (${action.minAmount}-${action.maxAmount}), or 0 to go back.`
+      );
+      continue;
+    }
     const choice = Number(answer);
     if (Number.isInteger(choice) && choice >= 1 && choice <= presets.length) {
       return presets[choice - 1].amount;
@@ -227,7 +236,7 @@ function printTable(state, player, toCall) {
     const equity = estimatePlayerEquity(state, player, false);
     console.log(`Equity: ${(equity * 100).toFixed(1)}%`);
   }
-  console.log(`Stacks: ${formatStacks(state.players)}`);
+  console.log(`Stacks: ${formatStacks(state.players, state)}`);
   console.log("Action log:");
   console.log(formatActionLog(state.actionLog, state.config.ACTION_LOG_LIMIT));
 }

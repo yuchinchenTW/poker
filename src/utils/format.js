@@ -45,9 +45,27 @@ function formatCards(cards) {
   return `[${cards.map(formatCard).join(" ")}]`;
 }
 
-function formatStacks(players) {
+// e.g. "H:1000(D) A1:995(SB) A2:990(BB) A3:fold". `state` is optional; without
+// it only name:stack is printed.
+function formatStacks(players, state) {
   return players
-    .map((p) => `${p.name}:${p.stack}`)
+    .map((p) => {
+      if (!p.inHand) {
+        return `${p.name}:OUT`;
+      }
+      if (p.hasFolded) {
+        return `${p.name}:${p.stack}(fold)`;
+      }
+      const tags = [];
+      if (state) {
+        if (state.buttonIndex === p.id) tags.push("D");
+        if (state.sbSeat === p.id) tags.push("SB");
+        if (state.bbSeat === p.id) tags.push("BB");
+      }
+      if (p.isAllIn) tags.push("all-in");
+      const suffix = tags.length ? `(${tags.join(",")})` : "";
+      return `${p.name}:${p.stack}${suffix}`;
+    })
     .join(" ");
 }
 

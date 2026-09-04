@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node test/evaluator.test.js && node test/betting.test.js && node test/pot.test.js && node test/ai.test.js"
+    "test": "node test/evaluator.test.js && node test/betting.test.js && node test/pot.test.js && node test/engine.test.js && node test/ai.test.js"
   },
   "engines": {
     "node": ">=18"

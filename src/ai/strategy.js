@@ -77,7 +77,27 @@ function buildCandidateBets(state, player, legalActions) {
     candidates.push({ type: "ALL_IN" });
   }
 
-  return candidates;
+  // De-duplicate: several pot fractions can clamp to the same amount, and a
+  // raise/bet for the whole stack is the same action as ALL_IN. Without this
+  // the softmax would give identical actions several times the weight.
+  const allInTo = player.currentBet + player.stack;
+  const seen = new Set();
+  return candidates.filter((c) => {
+    if (c.type !== "ALL_IN" && c.amount >= allInTo) {
+      if (!allInAction) {
+        c.type = "ALL_IN";
+        delete c.amount;
+      } else {
+        return false;
+      }
+    }
+    const key = c.type === "ALL_IN" ? "ALL_IN" : `${c.type}:${c.amount}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function chooseAction({ state, player, legalActions, opponentModel, rng }) {
@@ -125,20 +145,23 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
   // Aggression on the current street counts fully, earlier streets at half
   // weight so a flop raise is not forgotten on the turn. Facing a bet costs
   // 25% of raw equity, a bet + raise ~44%.
-  const aggressiveActions = Array.isArray(state.handActions)
+  // A voluntary preflop call also signals a better-than-random hand, so it
+  // counts as a quarter of a raise.
+  const rangeSignals = Array.isArray(state.handActions)
     ? state.handActions.filter(
         (a) =>
           !a.forced &&
           a.playerId !== player.id &&
-          ["BET", "RAISE", "ALL_IN"].includes(a.type) &&
+          (["BET", "RAISE", "ALL_IN"].includes(a.type) ||
+            (a.type === "CALL" && a.street === "PREFLOP")) &&
           state.players[a.playerId] &&
           !state.players[a.playerId].hasFolded
       )
     : [];
-  const aggressionFaced = aggressiveActions.reduce(
-    (sum, a) => sum + (a.street === state.betting.street ? 1 : 0.5),
-    0
-  );
+  const aggressionFaced = rangeSignals.reduce((sum, a) => {
+    const weight = a.type === "CALL" ? 0.25 : 1;
+    return sum + (a.street === state.betting.street ? weight : weight * 0.5);
+  }, 0);
   const equity = clamp(rawEquity * Math.pow(0.75, aggressionFaced), 0, 1);
 
   const profile = opponentModel ? opponentModel.getProfile() : null;
@@ -251,12 +274,15 @@ function chooseAction({ state, player, legalActions, opponentModel, rng }) {
 
   actions.sort((a, b) => b.ev - a.ev);
 
-  // Mixing temperature scales with the blind level (2 BB) so the softmax
-  // behaves the same at any stake: near-ties are mixed, clearly worse
-  // actions get near-zero probability. EVs are shifted by the best EV before
+  // Mixing temperature scales with the pot (2% of it, floor 0.25 BB) so the
+  // softmax behaves the same at any stake and on any street: preflop EV
+  // differences are only a few big blinds, so a large fixed temperature
+  // would make hand selection random, while postflop pots are big enough
+  // that near-ties still get mixed. EVs are shifted by the best EV before
   // exponentiating so large stakes cannot overflow to Infinity (which would
   // otherwise make the selection loop pick the worst action).
-  const temperature = Math.max(1, (state.config.BB || 10) * 2);
+  const bb = state.config.BB || 10;
+  const temperature = Math.max(1, bb * 0.25, potNow * 0.02);
   const bestEv = actions[0].ev;
   const weights = actions.map((entry) =>
     Math.exp((entry.ev - bestEv) / temperature)
